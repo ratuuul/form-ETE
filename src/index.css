@@ -186,7 +186,12 @@ body {
 
 .form-input.error {
   border-color: var(--error);
-  background: rgba(239, 68, 68, 0.05);
+  background: rgba(239, 68, 68, 0.08);
+}
+
+.form-input.xss-warning {
+  border-color: var(--error);
+  background: rgba(239, 68, 68, 0.12);
 }
 
 .form-input.valid {
@@ -742,4 +747,150 @@ body {
     padding: 10px 12px;
     font-size: 14px;
   }
+}
+
+/* Telecom Towers Loading Screen */
+.loading-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: var(--bg-primary);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+
+.telecom-towers {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 60px;
+  position: relative;
+}
+
+.tower {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+}
+
+.tower-body {
+  width: 8px;
+  height: 100px;
+  background: var(--text-secondary);
+  border-radius: 2px;
+}
+
+.tower-top {
+  width: 24px;
+  height: 16px;
+  background: var(--accent);
+  border-radius: 4px 4px 0 0;
+  position: relative;
+}
+
+.tower-top::before,
+.tower-top::after {
+  content: '';
+  position: absolute;
+  top: 6px;
+  width: 4px;
+  height: 4px;
+  background: var(--accent-hover);
+  border-radius: 50%;
+}
+
+.tower-top::before { left: 4px; }
+.tower-top::after { right: 4px; }
+
+.tower-left .signal,
+.tower-right .signal {
+  position: absolute;
+  right: -12px;
+  width: 20px;
+  height: 20px;
+  border: 3px solid var(--accent);
+  border-radius: 50%;
+  border-left-color: transparent;
+  border-bottom-color: transparent;
+  animation: signalPulse 1s ease-in-out infinite;
+}
+
+.tower-right .signal {
+  right: auto;
+  left: -12px;
+  transform: rotate(135deg);
+}
+
+.signal-1 { top: -30px; animation-delay: 0s; }
+.signal-2 { top: -50px; animation-delay: 0.2s; }
+.signal-3 { top: -70px; animation-delay: 0.4s; }
+
+@keyframes signalPulse {
+  0% { opacity: 0.3; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1.1); }
+  100% { opacity: 0; transform: scale(1.3); }
+}
+
+.tower-right .signal {
+  animation-name: signalPulseRight;
+}
+
+@keyframes signalPulseRight {
+  0% { opacity: 0.3; transform: rotate(135deg) scale(0.8); }
+  50% { opacity: 1; transform: rotate(135deg) scale(1.1); }
+  100% { opacity: 0; transform: rotate(135deg) scale(1.3); }
+}
+
+.data-packet {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  background: linear-gradient(135deg, var(--accent), var(--gradient-end));
+  border-radius: 4px;
+  top: 50%;
+  animation: dataTransmit 2s ease-in-out infinite;
+}
+
+.packet-right {
+  left: 30%;
+  animation-delay: 0.5s;
+}
+
+.packet-left {
+  right: 30%;
+  animation-delay: 1.5s;
+}
+
+@keyframes dataTransmit {
+  0%, 100% { opacity: 0; transform: translateX(0) scale(0.5); }
+  50% { opacity: 1; transform: translateX(30px) scale(1); }
+}
+
+.loading-text {
+  margin-top: 40px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  text-align: center;
+  max-width: 300px;
+  line-height: 1.6;
+}
+
+.loading-text span {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+[data-theme="dark"] .tower-body {
+  background: var(--text-muted);
+}
+
+[data-theme="dark"] .signal {
+  border-color: var(--accent-text);
 }

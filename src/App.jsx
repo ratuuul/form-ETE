@@ -3,36 +3,66 @@ import { useState, useRef, useEffect } from 'react'
 const CLOUDINARY_URL = 'https://api.cloudinary.com/v1_1/draywntzu/image/upload'
 const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbxJ6Ce9mV8gUZW96Tv2BdXrHfC_NnWLnLMdwR7E2b3auCNBQ4fdIl2Sep6TM6enPX8OFA/exec'
 
+const MAX_FILE_SIZE = 5 * 1024 * 1024
+const MAX_TEXT_LENGTH = 500
+
 const requiredFields = [
-  'name',
-  'roll',
-  'email',
-  'phone',
-  'series',
-  'school',
-  'college',
-  'hometown',
-  'facebook_profile',
+  'name', 'roll', 'email', 'phone', 'series',
+  'school', 'college', 'hometown', 'facebook_profile'
 ]
 
 const initialFormState = {
-  name: '',
-  roll: '',
-  email: '',
-  phone: '',
-  series: '',
-  school: '',
-  college: '',
-  hometown: '',
-  facebook_profile: '',
-  skills: '',
-  image_url: '',
+  name: '', roll: '', email: '', phone: '', series: '',
+  school: '', college: '', hometown: '', facebook_profile: '',
+  skills: '', image_url: ''
+}
+
+function sanitizeForSubmission(input) {
+  if (typeof input !== 'string') return ''
+  return input
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+    .replace(/javascript:/gi, '')
+    .replace(/on\w+\s*=/gi, '')
+    .replace(/<[^>]*>/g, '')
+    .trim()
+    .slice(0, MAX_TEXT_LENGTH)
+}
+
+function detectXSS(input) {
+  if (typeof input !== 'string') return null
+  const patterns = [
+    { regex: /<script/i, name: 'script tag' },
+    { regex: /<iframe/i, name: 'iframe tag' },
+    { regex: /<object/i, name: 'object tag' },
+    { regex: /<embed/i, name: 'embed tag' },
+    { regex: /<link/i, name: 'link tag' },
+    { regex: /<style/i, name: 'style tag' },
+    { regex: /javascript:/i, name: 'javascript protocol' },
+    { regex: /on\w+\s*=/i, name: 'event handler' },
+    { regex: /<[^>]*>/g, name: 'HTML tags' },
+    { regex: /&lt;|&#/i, name: 'encoded characters' }
+  ]
+  for (const p of patterns) {
+    if (p.regex.test(input)) return `Dangerous pattern: ${p.name}`
+  }
+  return null
+}
+
+function sanitizeUrl(url) {
+  if (!url) return ''
+  try {
+    const sanitized = sanitizeForSubmission(url)
+    const parsed = new URL(sanitized)
+    if (['http:', 'https:'].includes(parsed.protocol)) return sanitized
+    return ''
+  } catch { return '' }
 }
 
 function validateEmail(email) {
   if (!email) return { valid: false, message: '' }
-  const hasAt = email.includes('@')
-  const hasDomain = /\.com$|\.net$|\.edu$|\.org$|\.gov$|\.io$/i.test(email)
+  const sanitized = sanitizeForSubmission(email)
+  const hasAt = sanitized.includes('@')
+  const hasDomain = /\.com$|\.net$|\.edu$|\.org$|\.gov$|\.io$/i.test(sanitized)
   if (!hasAt) return { valid: false, message: 'Email must contain @' }
   if (!hasDomain) return { valid: false, message: 'Must have valid domain (.com, .net, etc.)' }
   return { valid: true, message: '' }
@@ -40,10 +70,10 @@ function validateEmail(email) {
 
 function validatePhone(phone) {
   if (!phone) return { valid: false, message: '' }
-  const digitsOnly = phone.replace(/\D/g, '')
-  if (digitsOnly.length < 11) {
-    return { valid: false, message: `At least 11 digits (${digitsOnly.length}/11)` }
-  }
+  const sanitized = sanitizeForSubmission(phone)
+  const digitsOnly = sanitized.replace(/\D/g, '')
+  if (digitsOnly.length < 11) return { valid: false, message: `At least 11 digits (${digitsOnly.length}/11)` }
+  if (digitsOnly.length > 20) return { valid: false, message: 'Phone too long (max 20 digits)' }
   return { valid: true, message: '' }
 }
 
@@ -92,13 +122,9 @@ function UploadIcon() {
 }
 
 export default function App() {
-  const [theme, setTheme] = useState(() => {
-    const saved = localStorage.getItem('theme')
-    return saved || 'light'
-  })
+  const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'light')
   const [formData, setFormData] = useState(initialFormState)
   const [errors, setErrors] = useState({})
-  const [touched, setTouched] = useState({})
   const [consent, setConsent] = useState(false)
   const [skills, setSkills] = useState([])
   const [skillInput, setSkillInput] = useState('')
@@ -108,7 +134,29 @@ export default function App() {
   const [submitting, setSubmitting] = useState(false)
   const [submitted, setSubmitted] = useState(false)
   const [submitError, setSubmitError] = useState('')
+  const [showLoading, setShowLoading] = useState(false)
+  const [loadingMessage, setLoadingMessage] = useState('')
   const fileInputRef = useRef(null)
+
+  const loadingMessages = [
+    'Please wait while <span>encrypting data</span>...',
+    'Please wait while <span>establishing connection</span>...',
+    'Please wait while <span>transferring files</span>...',
+    'Please wait while <span>verifying credentials</span>...',
+    'Please wait while <span>securing channel</span>...'
+  ]
+
+  useEffect(() => {
+    if (showLoading) {
+      let index = 0
+      setLoadingMessage(loadingMessages[0])
+      const interval = setInterval(() => {
+        index = (index + 1) % loadingMessages.length
+        setLoadingMessage(loadingMessages[index])
+      }, 1500)
+      return () => clearInterval(interval)
+    }
+  }, [showLoading])
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme)
@@ -117,27 +165,26 @@ export default function App() {
 
   const validateField = (name, value) => {
     switch (name) {
-      case 'email':
-        return validateEmail(value)
-      case 'phone':
-        return validatePhone(value)
-      default:
-        return { valid: value.trim().length > 0, message: value.trim() ? '' : 'This field is required' }
+      case 'email': return validateEmail(value)
+      case 'phone': return validatePhone(value)
+      default: {
+        const xssWarning = detectXSS(value)
+        if (xssWarning) return { valid: false, message: xssWarning }
+        const sanitized = sanitizeForSubmission(value)
+        return { valid: sanitized.length > 0, message: sanitized.length > 0 ? '' : 'This field is required' }
+      }
     }
   }
 
   const handleChange = (e) => {
     const { name, value } = e.target
     setFormData((prev) => ({ ...prev, [name]: value }))
-    if (touched[name]) {
-      const result = validateField(name, value)
-      setErrors((prev) => ({ ...prev, [name]: result.valid ? '' : result.message }))
-    }
+    const result = validateField(name, value)
+    setErrors((prev) => ({ ...prev, [name]: result.valid ? '' : result.message }))
   }
 
   const handleBlur = (e) => {
     const { name, value } = e.target
-    setTouched((prev) => ({ ...prev, [name]: true }))
     const result = validateField(name, value)
     setErrors((prev) => ({ ...prev, [name]: result.valid ? '' : result.message }))
   }
@@ -145,8 +192,8 @@ export default function App() {
   const handleAddSkill = (e) => {
     if (e.key === 'Enter' && skillInput.trim()) {
       e.preventDefault()
-      const newSkill = skillInput.trim()
-      if (!skills.includes(newSkill)) {
+      const newSkill = sanitizeForSubmission(skillInput.trim())
+      if (newSkill && newSkill.length <= 50 && !skills.includes(newSkill) && skills.length < 20) {
         setSkills([...skills, newSkill])
         setFormData((prev) => ({ ...prev, skills: [...skills, newSkill].join(', ') }))
       }
@@ -163,12 +210,17 @@ export default function App() {
   const handleImageSelect = (e) => {
     const file = e.target.files[0]
     if (file) {
-      if (!file.type.startsWith('image/')) {
-        setErrors((prev) => ({ ...prev, image: 'Please select an image file' }))
+      const validTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
+      if (!validTypes.includes(file.type)) {
+        setErrors((prev) => ({ ...prev, image: 'Only JPEG, PNG, GIF, or WebP allowed' }))
         return
       }
-      if (file.size > 10 * 1024 * 1024) {
-        setErrors((prev) => ({ ...prev, image: 'Image must be less than 10MB' }))
+      if (file.size > MAX_FILE_SIZE) {
+        setErrors((prev) => ({ ...prev, image: 'Image must be less than 5MB' }))
+        return
+      }
+      if (/[<>'"&]/.test(file.name)) {
+        setErrors((prev) => ({ ...prev, image: 'Invalid file name' }))
         return
       }
       setImageFile(file)
@@ -178,39 +230,39 @@ export default function App() {
   }
 
   const handleRemoveImage = () => {
+    if (imagePreview) URL.revokeObjectURL(imagePreview)
     setImageFile(null)
     setImagePreview(null)
     setFormData((prev) => ({ ...prev, image_url: '' }))
-    if (fileInputRef.current) {
-      fileInputRef.current.value = ''
-    }
+    if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
   const uploadToCloudinary = async (file) => {
     const formDataUpload = new FormData()
     formDataUpload.append('file', file)
     formDataUpload.append('upload_preset', 'alumni')
-
-    const response = await fetch(CLOUDINARY_URL, {
-      method: 'POST',
-      body: formDataUpload,
-    })
-
-    if (!response.ok) {
-      const errorText = await response.text()
-      throw new Error(`Upload failed: ${response.status} - ${errorText}`)
-    }
-
+    const response = await fetch(CLOUDINARY_URL, { method: 'POST', body: formDataUpload })
+    if (!response.ok) throw new Error('Upload failed')
     const data = await response.json()
-    return data.secure_url
+    if (data.secure_url && data.secure_url.startsWith('https://res.cloudinary.com')) {
+      return data.secure_url
+    }
+    throw new Error('Invalid response')
   }
 
   const isFormValid = () => {
     const emailValid = validateEmail(formData.email).valid
     const phoneValid = validatePhone(formData.phone).valid
-    const allRequiredFilled = requiredFields.every((field) => formData[field].trim().length > 0)
-    return emailValid && phoneValid && allRequiredFilled && consent
+    const allFilled = requiredFields.every((field) => {
+      const val = sanitizeForSubmission(formData[field])
+      return val.length > 0
+    })
+    return emailValid && phoneValid && allFilled && consent
   }
+
+  const hasValue = (field) => formData[field] && formData[field].trim().length > 0
+  const hasNoErrors = (field) => !errors[field]
+  const hasXssWarning = (field) => errors[field] && errors[field].includes('Dangerous')
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -219,21 +271,14 @@ export default function App() {
     const newErrors = {}
     requiredFields.forEach((field) => {
       const result = validateField(field, formData[field])
-      if (!result.valid) {
-        newErrors[field] = result.message
-      }
+      if (!result.valid) newErrors[field] = result.message
     })
 
-    if (!validateEmail(formData.email).valid) {
-      newErrors.email = validateEmail(formData.email).message
-    }
-    if (!validatePhone(formData.phone).valid) {
-      newErrors.phone = validatePhone(formData.phone).message
-    }
+    if (!validateEmail(formData.email).valid) newErrors.email = validateEmail(formData.email).message
+    if (!validatePhone(formData.phone).valid) newErrors.phone = validatePhone(formData.phone).message
 
     if (Object.keys(newErrors).length > 0) {
       setErrors(newErrors)
-      setTouched(requiredFields.reduce((acc, field) => ({ ...acc, [field]: true }), {}))
       return
     }
 
@@ -243,65 +288,40 @@ export default function App() {
     }
 
     setSubmitting(true)
+    setShowLoading(true)
+
+    await new Promise(resolve => setTimeout(resolve, 1500))
 
     try {
-      let imageUrl = ''
+      let imageUrl = formData.image_url
+      if (imageFile && !imageUrl) imageUrl = await uploadToCloudinary(imageFile)
 
-      if (imageFile) {
-        setUploading(true)
-        console.log('Uploading image to Cloudinary...')
-        try {
-          imageUrl = await uploadToCloudinary(imageFile)
-          console.log('Image uploaded successfully:', imageUrl)
-        } catch (uploadError) {
-          console.error('Image upload failed:', uploadError)
-          imageUrl = ''
-        }
-        setUploading(false)
+      const sanitizedData = {
+        name: sanitizeForSubmission(formData.name),
+        roll: sanitizeForSubmission(formData.roll),
+        email: sanitizeForSubmission(formData.email).toLowerCase(),
+        phone: sanitizeForSubmission(formData.phone),
+        series: sanitizeForSubmission(formData.series),
+        school: sanitizeForSubmission(formData.school),
+        college: sanitizeForSubmission(formData.college),
+        hometown: sanitizeForSubmission(formData.hometown),
+        facebook_profile: sanitizeUrl(formData.facebook_profile),
+        skills: sanitizeForSubmission(formData.skills),
+        image_url: sanitizeUrl(imageUrl)
       }
 
       const response = await fetch(BACKEND_URL, {
         method: 'POST',
-        body: new URLSearchParams({
-          name: formData.name,
-          roll: formData.roll,
-          email: formData.email,
-          phone: formData.phone,
-          series: formData.series,
-          school: formData.school,
-          college: formData.college,
-          hometown: formData.hometown,
-          facebook_profile: formData.facebook_profile,
-          skills: formData.skills,
-          image_url: imageUrl,
-        }),
+        body: new URLSearchParams(sanitizedData)
       })
 
-      // Log what was sent
-      console.log('=== DATA SENT TO SERVER ===')
-      console.log('name:', formData.name)
-      console.log('roll:', formData.roll)
-      console.log('email:', formData.email)
-      console.log('phone:', formData.phone)
-      console.log('series:', formData.series)
-      console.log('school:', formData.school)
-      console.log('college:', formData.college)
-      console.log('hometown:', formData.hometown)
-      console.log('facebook_profile:', formData.facebook_profile)
-      console.log('skills:', formData.skills)
-      console.log('image_url:', imageUrl)
-      console.log('==========================')
-
       const result = await response.text()
-      console.log('Response:', result)
-
-      if (!response.ok) {
-        throw new Error('Submission failed')
-      }
-
+      if (!response.ok) throw new Error('Submission failed')
+      await new Promise(resolve => setTimeout(resolve, 1000))
+      setShowLoading(false)
       setSubmitted(true)
     } catch (error) {
-      console.error('Submission error:', error)
+      setShowLoading(false)
       setSubmitError('Submission failed. Please try again.')
     } finally {
       setSubmitting(false)
@@ -310,9 +330,9 @@ export default function App() {
   }
 
   const handleReset = () => {
+    if (imagePreview) URL.revokeObjectURL(imagePreview)
     setFormData(initialFormState)
     setErrors({})
-    setTouched({})
     setConsent(false)
     setSkills([])
     setSkillInput('')
@@ -320,9 +340,7 @@ export default function App() {
     setImagePreview(null)
     setSubmitted(false)
     setSubmitError('')
-    if (fileInputRef.current) {
-      fileInputRef.current.value = ''
-    }
+    if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
   if (submitted) {
@@ -337,11 +355,35 @@ export default function App() {
             </div>
             <h2>Registration Complete!</h2>
             <p>Your information has been submitted successfully.</p>
-            <button onClick={handleReset} className="reset-btn">
-              Submit Another Response
-            </button>
+            <button onClick={handleReset} className="reset-btn">Submit Another Response</button>
           </div>
         </div>
+      </div>
+    )
+  }
+
+  if (showLoading) {
+    return (
+      <div className="loading-overlay">
+        <div className="telecom-towers">
+          <div className="tower tower-left">
+            <div className="tower-body"></div>
+            <div className="tower-top"></div>
+            <div className="signal signal-1"></div>
+            <div className="signal signal-2"></div>
+            <div className="signal signal-3"></div>
+          </div>
+          <div className="data-packet packet-right"></div>
+          <div className="data-packet packet-left"></div>
+          <div className="tower tower-right">
+            <div className="tower-body"></div>
+            <div className="tower-top"></div>
+            <div className="signal signal-1"></div>
+            <div className="signal signal-2"></div>
+            <div className="signal signal-3"></div>
+          </div>
+        </div>
+        <div className="loading-text" dangerouslySetInnerHTML={{ __html: loadingMessage }}></div>
       </div>
     )
   }
@@ -351,15 +393,10 @@ export default function App() {
       <header className="header">
         <div className="header-content">
           <div className="header-icon">📚</div>
-          <h1>Student Registration</h1>
+          <h1>Data Collection ETE</h1>
         </div>
-        <button
-          className="theme-toggle"
-          onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
-          aria-label="Toggle theme"
-        >
+        <button className="theme-toggle" onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')} aria-label="Toggle theme">
           {theme === 'light' ? <MoonIcon /> : <SunIcon />}
-          {theme === 'light' ? 'Dark' : 'Light'}
         </button>
       </header>
 
@@ -375,85 +412,43 @@ export default function App() {
 
         <div className="form-group">
           <label className="form-label">Name <span className="required">*</span></label>
-          <input
-            type="text"
-            name="name"
-            value={formData.name}
-            onChange={handleChange}
-            onBlur={handleBlur}
-            className={`form-input ${touched.name && errors.name ? 'error' : ''} ${touched.name && !errors.name && formData.name ? 'valid' : ''}`}
-            placeholder="Enter your full name"
-          />
-          {touched.name && errors.name && (
-            <div className="form-error"><AlertIcon />{errors.name}</div>
-          )}
+          <input type="text" name="name" value={formData.name} onChange={handleChange} onBlur={handleBlur}
+            className={`form-input ${hasXssWarning('name') ? 'xss-warning' : ''} ${hasNoErrors('name') && hasValue('name') ? 'valid' : ''}`}
+            placeholder="Enter your full name" maxLength={MAX_TEXT_LENGTH} />
+          {errors.name && <div className="form-error"><AlertIcon />{errors.name}</div>}
         </div>
 
         <div className="form-row">
           <div className="form-group">
             <label className="form-label">Roll Number <span className="required">*</span></label>
-            <input
-              type="text"
-              name="roll"
-              value={formData.roll}
-              onChange={handleChange}
-              onBlur={handleBlur}
-              className={`form-input ${touched.roll && errors.roll ? 'error' : ''} ${touched.roll && !errors.roll && formData.roll ? 'valid' : ''}`}
-              placeholder="e.g., 12345"
-            />
-            {touched.roll && errors.roll && (
-              <div className="form-error"><AlertIcon />{errors.roll}</div>
-            )}
+            <input type="text" name="roll" value={formData.roll} onChange={handleChange} onBlur={handleBlur}
+              className={`form-input ${hasXssWarning('roll') ? 'xss-warning' : ''} ${hasNoErrors('roll') && hasValue('roll') ? 'valid' : ''}`}
+              placeholder="e.g., 12345" maxLength={50} />
+            {errors.roll && <div className="form-error"><AlertIcon />{errors.roll}</div>}
           </div>
-
           <div className="form-group">
             <label className="form-label">Series <span className="required">*</span></label>
-            <input
-              type="text"
-              name="series"
-              value={formData.series}
-              onChange={handleChange}
-              onBlur={handleBlur}
-              className={`form-input ${touched.series && errors.series ? 'error' : ''} ${touched.series && !errors.series && formData.series ? 'valid' : ''}`}
-              placeholder="e.g., 2024"
-            />
-            {touched.series && errors.series && (
-              <div className="form-error"><AlertIcon />{errors.series}</div>
-            )}
+            <input type="text" name="series" value={formData.series} onChange={handleChange} onBlur={handleBlur}
+              className={`form-input ${hasXssWarning('series') ? 'xss-warning' : ''} ${hasNoErrors('series') && hasValue('series') ? 'valid' : ''}`}
+              placeholder="e.g., 2024" maxLength={20} />
+            {errors.series && <div className="form-error"><AlertIcon />{errors.series}</div>}
           </div>
         </div>
 
         <div className="form-row">
           <div className="form-group">
             <label className="form-label">Email <span className="required">*</span></label>
-            <input
-              type="email"
-              name="email"
-              value={formData.email}
-              onChange={handleChange}
-              onBlur={handleBlur}
-              className={`form-input ${touched.email && errors.email ? 'error' : ''} ${touched.email && !errors.email && formData.email ? 'valid' : ''}`}
-              placeholder="you@example.com"
-            />
-            {touched.email && errors.email && (
-              <div className="form-error"><AlertIcon />{errors.email}</div>
-            )}
+            <input type="email" name="email" value={formData.email} onChange={handleChange} onBlur={handleBlur}
+              className={`form-input ${errors.email ? 'xss-warning' : ''} ${hasNoErrors('email') && hasValue('email') ? 'valid' : ''}`}
+              placeholder="you@example.com" maxLength={100} />
+            {errors.email && <div className="form-error"><AlertIcon />{errors.email}</div>}
           </div>
-
           <div className="form-group">
             <label className="form-label">Phone <span className="required">*</span></label>
-            <input
-              type="tel"
-              name="phone"
-              value={formData.phone}
-              onChange={handleChange}
-              onBlur={handleBlur}
-              className={`form-input ${touched.phone && errors.phone ? 'error' : ''} ${touched.phone && !errors.phone && formData.phone ? 'valid' : ''}`}
-              placeholder="+880 1XXX XXXXXX"
-            />
-            {touched.phone && errors.phone && (
-              <div className="form-error"><AlertIcon />{errors.phone}</div>
-            )}
+            <input type="tel" name="phone" value={formData.phone} onChange={handleChange} onBlur={handleBlur}
+              className={`form-input ${errors.phone ? 'xss-warning' : ''} ${hasNoErrors('phone') && hasValue('phone') ? 'valid' : ''}`}
+              placeholder="+880 1XXX XXXXXX" maxLength={20} />
+            {errors.phone && <div className="form-error"><AlertIcon />{errors.phone}</div>}
           </div>
         </div>
 
@@ -462,34 +457,18 @@ export default function App() {
 
         <div className="form-group">
           <label className="form-label">School <span className="required">*</span></label>
-          <input
-            type="text"
-            name="school"
-            value={formData.school}
-            onChange={handleChange}
-            onBlur={handleBlur}
-            className={`form-input ${touched.school && errors.school ? 'error' : ''} ${touched.school && !errors.school && formData.school ? 'valid' : ''}`}
-            placeholder="Enter your school name"
-          />
-          {touched.school && errors.school && (
-            <div className="form-error"><AlertIcon />{errors.school}</div>
-          )}
+          <input type="text" name="school" value={formData.school} onChange={handleChange} onBlur={handleBlur}
+            className={`form-input ${hasXssWarning('school') ? 'xss-warning' : ''} ${hasNoErrors('school') && hasValue('school') ? 'valid' : ''}`}
+            placeholder="Enter your school name" maxLength={MAX_TEXT_LENGTH} />
+          {errors.school && <div className="form-error"><AlertIcon />{errors.school}</div>}
         </div>
 
         <div className="form-group">
           <label className="form-label">College <span className="required">*</span></label>
-          <input
-            type="text"
-            name="college"
-            value={formData.college}
-            onChange={handleChange}
-            onBlur={handleBlur}
-            className={`form-input ${touched.college && errors.college ? 'error' : ''} ${touched.college && !errors.college && formData.college ? 'valid' : ''}`}
-            placeholder="Enter your college name"
-          />
-          {touched.college && errors.college && (
-            <div className="form-error"><AlertIcon />{errors.college}</div>
-          )}
+          <input type="text" name="college" value={formData.college} onChange={handleChange} onBlur={handleBlur}
+            className={`form-input ${hasXssWarning('college') ? 'xss-warning' : ''} ${hasNoErrors('college') && hasValue('college') ? 'valid' : ''}`}
+            placeholder="Enter your college name" maxLength={MAX_TEXT_LENGTH} />
+          {errors.college && <div className="form-error"><AlertIcon />{errors.college}</div>}
         </div>
 
         <div className="section-divider" />
@@ -497,34 +476,18 @@ export default function App() {
 
         <div className="form-group">
           <label className="form-label">Home Town <span className="required">*</span></label>
-          <input
-            type="text"
-            name="hometown"
-            value={formData.hometown}
-            onChange={handleChange}
-            onBlur={handleBlur}
-            className={`form-input ${touched.hometown && errors.hometown ? 'error' : ''} ${touched.hometown && !errors.hometown && formData.hometown ? 'valid' : ''}`}
-            placeholder="Enter your hometown"
-          />
-          {touched.hometown && errors.hometown && (
-            <div className="form-error"><AlertIcon />{errors.hometown}</div>
-          )}
+          <input type="text" name="hometown" value={formData.hometown} onChange={handleChange} onBlur={handleBlur}
+            className={`form-input ${hasXssWarning('hometown') ? 'xss-warning' : ''} ${hasNoErrors('hometown') && hasValue('hometown') ? 'valid' : ''}`}
+            placeholder="Enter your hometown" maxLength={MAX_TEXT_LENGTH} />
+          {errors.hometown && <div className="form-error"><AlertIcon />{errors.hometown}</div>}
         </div>
 
         <div className="form-group">
           <label className="form-label">Facebook URL <span className="required">*</span></label>
-          <input
-            type="url"
-            name="facebook_profile"
-            value={formData.facebook_profile}
-            onChange={handleChange}
-            onBlur={handleBlur}
-            className={`form-input ${touched.facebook_profile && errors.facebook_profile ? 'error' : ''} ${touched.facebook_profile && !errors.facebook_profile && formData.facebook_profile ? 'valid' : ''}`}
-            placeholder="https://facebook.com/..."
-          />
-          {touched.facebook_profile && errors.facebook_profile && (
-            <div className="form-error"><AlertIcon />{errors.facebook_profile}</div>
-          )}
+          <input type="url" name="facebook_profile" value={formData.facebook_profile} onChange={handleChange} onBlur={handleBlur}
+            className={`form-input ${hasXssWarning('facebook_profile') ? 'xss-warning' : ''} ${hasNoErrors('facebook_profile') && hasValue('facebook_profile') ? 'valid' : ''}`}
+            placeholder="https://facebook.com/..." maxLength={500} />
+          {errors.facebook_profile && <div className="form-error"><AlertIcon />{errors.facebook_profile}</div>}
         </div>
 
         <div className="form-group">
@@ -536,61 +499,40 @@ export default function App() {
                 <button type="button" onClick={() => handleRemoveSkill(skill)}>×</button>
               </span>
             ))}
-            <input
-              type="text"
-              value={skillInput}
-              onChange={(e) => setSkillInput(e.target.value)}
-              onKeyDown={handleAddSkill}
-              placeholder={skills.length === 0 ? 'Type and press Enter' : ''}
-            />
+            <input type="text" value={skillInput} onChange={(e) => setSkillInput(e.target.value)} onKeyDown={handleAddSkill}
+              placeholder={skills.length === 0 ? 'Type and press Enter' : ''} maxLength={50} />
           </div>
         </div>
 
         <div className="form-group">
           <label className="form-label">Profile Image (Optional)</label>
-          <div
-            className={`image-upload ${imagePreview ? 'has-image' : ''}`}
-            onClick={() => !imagePreview && fileInputRef.current?.click()}
-          >
+          <div className={`image-upload ${imagePreview ? 'has-image' : ''}`}
+            onClick={() => !imagePreview && fileInputRef.current?.click()}>
             {imagePreview ? (
               <img src={imagePreview} alt="Preview" className="preview-image" />
             ) : (
               <div className="image-upload-content">
                 <span className="image-upload-icon"><UploadIcon /></span>
                 <span className="image-upload-text">Tap to upload image</span>
-                <span className="image-upload-hint">PNG, JPG up to 10MB</span>
+                <span className="image-upload-hint">PNG, JPG up to 5MB</span>
               </div>
             )}
           </div>
-          <input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageSelect} style={{ display: 'none' }} />
-          {imageFile && !imagePreview && (
-            <div className="upload-actions">
-              <button type="button" onClick={handleRemoveImage} className="remove-btn">Remove</button>
-            </div>
-          )}
+          <input ref={fileInputRef} type="file" accept="image/jpeg,image/png,image/gif,image/webp" onChange={handleImageSelect} style={{ display: 'none' }} />
           {imagePreview && (
             <div className="upload-actions">
               <button type="button" onClick={() => fileInputRef.current?.click()} className="upload-btn">Change Image</button>
               <button type="button" onClick={handleRemoveImage} className="remove-btn">Remove</button>
             </div>
           )}
-          {uploading && <p className="form-helper">Uploading to Cloudinary...</p>}
-          {errors.image && (
-            <div className="form-error"><AlertIcon />{errors.image}</div>
-          )}
+          {errors.image && <div className="form-error"><AlertIcon />{errors.image}</div>}
         </div>
 
         <div className="section-divider" />
 
         <div className="form-group">
           <div className="checkbox-group">
-            <input
-              type="checkbox"
-              id="consent"
-              checked={consent}
-              onChange={(e) => setConsent(e.target.checked)}
-              className="checkbox-input"
-            />
+            <input type="checkbox" id="consent" checked={consent} onChange={(e) => setConsent(e.target.checked)} className="checkbox-input" />
             <label htmlFor="consent" className="checkbox-label">
               I consent to the collection and storage of my personal information. <span className="required">*</span>
             </label>
@@ -598,12 +540,9 @@ export default function App() {
         </div>
 
         <div className="form-actions">
-          <button
-            type="submit"
-            className={`submit-btn ${submitting ? 'loading' : ''}`}
-            disabled={!isFormValid() || submitting || uploading}
-          >
-            {uploading ? 'Uploading...' : submitting ? '' : 'Submit Registration'}
+          <button type="submit" className={`submit-btn ${submitting ? 'loading' : ''}`}
+            disabled={!isFormValid() || submitting || uploading}>
+            {submitting ? '' : 'Submit Registration'}
           </button>
         </div>
       </form>
