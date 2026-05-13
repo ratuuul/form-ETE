@@ -14,7 +14,7 @@ const requiredFields = [
 const initialFormState = {
   name: '', roll: '', email: '', phone: '', series: '',
   school: '', college: '', hometown: '', facebook_profile: '',
-  skills: '', image_url: ''
+  skills: '', image_url: '', ip_address: '', device_info: ''
 }
 
 function sanitizeForSubmission(input) {
@@ -75,6 +75,38 @@ function validatePhone(phone) {
   if (digitsOnly.length < 11) return { valid: false, message: `At least 11 digits (${digitsOnly.length}/11)` }
   if (digitsOnly.length > 20) return { valid: false, message: 'Phone too long (max 20 digits)' }
   return { valid: true, message: '' }
+}
+
+async function getClientIP() {
+  try {
+    const response = await fetch('https://api.ipify.org?format=text', { method: 'GET' })
+    if (response.ok) return await response.text()
+  } catch { return 'unknown' }
+  return 'unknown'
+}
+
+function getDeviceInfo() {
+  const ua = navigator.userAgent
+  const platform = navigator.platform || 'unknown'
+  const language = navigator.language || 'unknown'
+  const screenRes = `${window.screen.width}x${window.screen.height}`
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'unknown'
+
+  let browser = 'unknown'
+  if (ua.includes('Firefox')) browser = 'Firefox'
+  else if (ua.includes('Chrome') && !ua.includes('Edg')) browser = 'Chrome'
+  else if (ua.includes('Safari') && !ua.includes('Chrome')) browser = 'Safari'
+  else if (ua.includes('Edg')) browser = 'Edge'
+  else if (ua.includes('OPR') || ua.includes('Opera')) browser = 'Opera'
+
+  let os = 'unknown'
+  if (ua.includes('Windows')) os = 'Windows'
+  else if (ua.includes('Mac')) os = 'macOS'
+  else if (ua.includes('Linux')) os = 'Linux'
+  else if (ua.includes('Android')) os = 'Android'
+  else if (ua.includes('iPhone') || ua.includes('iPad')) os = 'iOS'
+
+  return `${os} | ${browser} | ${screenRes} | ${timezone} | ${language}`
 }
 
 function SunIcon() {
@@ -207,22 +239,53 @@ export default function App() {
     setFormData((prev) => ({ ...prev, skills: newSkills.join(', ') }))
   }
 
-  const handleImageSelect = (e) => {
+  const validateImageSignature = async (file) => {
+    const signatures = {
+      'jpeg': [0xFF, 0xD8, 0xFF],
+      'png': [0x89, 0x50, 0x4E, 0x47],
+      'gif': [0x47, 0x49, 0x46],
+      'webp': [0x52, 0x49, 0x46, 0x46]
+    }
+
+    const allowedExtensions = {
+      'jpeg': ['jpg', 'jpeg'],
+      'png': ['png'],
+      'gif': ['gif'],
+      'webp': ['webp']
+    }
+
+    const buffer = await file.slice(0, 12).arrayBuffer()
+    const bytes = new Uint8Array(buffer)
+
+    for (const [format, sig] of Object.entries(signatures)) {
+      if (bytes.length >= sig.length && sig.every((b, i) => bytes[i] === b)) {
+        const ext = file.name.split('.').pop().toLowerCase()
+        if (allowedExtensions[format].includes(ext)) {
+          return true
+        }
+      }
+    }
+    return false
+  }
+
+  const handleImageSelect = async (e) => {
     const file = e.target.files[0]
     if (file) {
-      const validTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
-      if (!validTypes.includes(file.type)) {
-        setErrors((prev) => ({ ...prev, image: 'Only JPEG, PNG, GIF, or WebP allowed' }))
-        return
-      }
       if (file.size > MAX_FILE_SIZE) {
         setErrors((prev) => ({ ...prev, image: 'Image must be less than 5MB' }))
         return
       }
-      if (/[<>'"&]/.test(file.name)) {
+      if (/[<>'"&\\]/.test(file.name)) {
         setErrors((prev) => ({ ...prev, image: 'Invalid file name' }))
         return
       }
+
+      const hasValidSignature = await validateImageSignature(file)
+      if (!hasValidSignature) {
+        setErrors((prev) => ({ ...prev, image: 'Invalid or corrupted image file' }))
+        return
+      }
+
       setImageFile(file)
       setImagePreview(URL.createObjectURL(file))
       setErrors((prev) => ({ ...prev, image: '' }))
@@ -237,17 +300,46 @@ export default function App() {
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
-  const uploadToCloudinary = async (file) => {
+  const CLOUDINARY_DOMAIN = 'res.cloudinary.com'
+  const CLOUDINARY_CLOUD = 'draywntzu'
+
+  const uploadToCloudinary = async (file, signal) => {
     const formDataUpload = new FormData()
     formDataUpload.append('file', file)
     formDataUpload.append('upload_preset', 'alumni')
-    const response = await fetch(CLOUDINARY_URL, { method: 'POST', body: formDataUpload })
-    if (!response.ok) throw new Error('Upload failed')
-    const data = await response.json()
-    if (data.secure_url && data.secure_url.startsWith('https://res.cloudinary.com')) {
+
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 120000)
+    const abortSignal = signal || controller.signal
+
+    try {
+      const response = await fetch(CLOUDINARY_URL, {
+        method: 'POST',
+        body: formDataUpload,
+        signal: abortSignal
+      })
+      clearTimeout(timeoutId)
+
+      if (!response.ok) throw new Error('Upload failed')
+      const data = await response.json()
+
+      if (!data.secure_url) throw new Error('No URL returned')
+      const urlObj = new URL(data.secure_url)
+
+      if (urlObj.hostname !== CLOUDINARY_DOMAIN || !urlObj.hostname.includes(CLOUDINARY_CLOUD)) {
+        throw new Error('Invalid CDN domain')
+      }
+
+      if (/[<>'"&\\n\r]/.test(data.secure_url)) {
+        throw new Error('Invalid characters in response')
+      }
+
       return data.secure_url
+    } catch (err) {
+      clearTimeout(timeoutId)
+      if (err.name === 'AbortError') throw new Error('Upload timed out')
+      throw err
     }
-    throw new Error('Invalid response')
   }
 
   const isFormValid = () => {
@@ -293,6 +385,11 @@ export default function App() {
     await new Promise(resolve => setTimeout(resolve, 1500))
 
     try {
+      const [clientIP, deviceInfo] = await Promise.all([
+        getClientIP(),
+        Promise.resolve(getDeviceInfo())
+      ])
+
       let imageUrl = formData.image_url
       if (imageFile && !imageUrl) imageUrl = await uploadToCloudinary(imageFile)
 
@@ -307,7 +404,9 @@ export default function App() {
         hometown: sanitizeForSubmission(formData.hometown),
         facebook_profile: sanitizeUrl(formData.facebook_profile),
         skills: sanitizeForSubmission(formData.skills),
-        image_url: sanitizeUrl(imageUrl)
+        image_url: sanitizeUrl(imageUrl),
+        ip_address: clientIP,
+        device_info: deviceInfo
       }
 
       const response = await fetch(BACKEND_URL, {
