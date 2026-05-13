@@ -86,27 +86,31 @@ async function getClientIP() {
 }
 
 function getDeviceInfo() {
-  const ua = navigator.userAgent
-  const platform = navigator.platform || 'unknown'
-  const language = navigator.language || 'unknown'
-  const screenRes = `${window.screen.width}x${window.screen.height}`
-  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'unknown'
+  try {
+    const ua = navigator.userAgent
+    const platform = navigator.platform || 'unknown'
+    const language = navigator.language || 'unknown'
+    const screenRes = `${window.screen.width}x${window.screen.height}`
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'unknown'
 
-  let browser = 'unknown'
-  if (ua.includes('Firefox')) browser = 'Firefox'
-  else if (ua.includes('Chrome') && !ua.includes('Edg')) browser = 'Chrome'
-  else if (ua.includes('Safari') && !ua.includes('Chrome')) browser = 'Safari'
-  else if (ua.includes('Edg')) browser = 'Edge'
-  else if (ua.includes('OPR') || ua.includes('Opera')) browser = 'Opera'
+    let browser = 'unknown'
+    if (ua.includes('Firefox')) browser = 'Firefox'
+    else if (ua.includes('Chrome') && !ua.includes('Edg')) browser = 'Chrome'
+    else if (ua.includes('Safari') && !ua.includes('Chrome')) browser = 'Safari'
+    else if (ua.includes('Edg')) browser = 'Edge'
+    else if (ua.includes('OPR') || ua.includes('Opera')) browser = 'Opera'
 
-  let os = 'unknown'
-  if (ua.includes('Windows')) os = 'Windows'
-  else if (ua.includes('Mac')) os = 'macOS'
-  else if (ua.includes('Linux')) os = 'Linux'
-  else if (ua.includes('Android')) os = 'Android'
-  else if (ua.includes('iPhone') || ua.includes('iPad')) os = 'iOS'
+    let os = 'unknown'
+    if (ua.includes('Windows')) os = 'Windows'
+    else if (ua.includes('Mac')) os = 'macOS'
+    else if (ua.includes('Linux')) os = 'Linux'
+    else if (ua.includes('Android')) os = 'Android'
+    else if (ua.includes('iPhone') || ua.includes('iPad')) os = 'iOS'
 
-  return `${os} | ${browser} | ${screenRes} | ${timezone} | ${language}`
+    return `${os} | ${browser} | ${screenRes} | ${timezone} | ${language}`
+  } catch {
+    return 'not detected'
+  }
 }
 
 function SunIcon() {
@@ -169,6 +173,11 @@ export default function App() {
   const [showLoading, setShowLoading] = useState(false)
   const [loadingMessage, setLoadingMessage] = useState('')
   const fileInputRef = useRef(null)
+  const formLoadTime = useRef(Date.now())
+
+  useEffect(() => {
+    formLoadTime.current = Date.now()
+  }, [])
 
   const loadingMessages = [
     'Please wait while <span>encrypting data</span>...',
@@ -360,6 +369,29 @@ export default function App() {
     e.preventDefault()
     setSubmitError('')
 
+    const timeOnPage = Date.now() - formLoadTime.current
+    if (timeOnPage < 3000) {
+      setSubmitError('Please take your time to fill the form properly')
+      return
+    }
+
+    try {
+      const lastSubmit = localStorage.getItem('lastSubmitTime')
+      const lastIP = localStorage.getItem('lastSubmitIP')
+      const clientIP = await getClientIP()
+
+      if (lastSubmit && lastIP === clientIP) {
+        const timeSinceLastSubmit = Date.now() - parseInt(lastSubmit, 10)
+        if (timeSinceLastSubmit < 60000) {
+          setSubmitError('Please wait 1 minute before submitting again')
+          return
+        }
+      }
+
+      localStorage.setItem('lastSubmitTime', Date.now().toString())
+      localStorage.setItem('lastSubmitIP', clientIP)
+    } catch {}
+
     const newErrors = {}
     requiredFields.forEach((field) => {
       const result = validateField(field, formData[field])
@@ -386,8 +418,8 @@ export default function App() {
 
     try {
       const [clientIP, deviceInfo] = await Promise.all([
-        getClientIP(),
-        Promise.resolve(getDeviceInfo())
+        getClientIP().catch(() => 'unknown'),
+        Promise.resolve(getDeviceInfo()).catch(() => 'not detected')
       ])
 
       let imageUrl = formData.image_url
